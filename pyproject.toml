@@ -45,6 +45,11 @@ dev = [
 [project.scripts]
 flea-bot = "flea_bot.cli:app"
 
+[project.gui-scripts]
+# On Windows this gets a pythonw.exe launcher, so double-clicking it opens the
+# dashboard without a console window behind it.
+flea-bot-gui = "flea_bot.gui:launch"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

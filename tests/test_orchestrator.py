@@ -335,6 +335,94 @@ class TestRun:
         }
 
 
+class TestSessionBudget:
+    """The spend cap must bound a run without corrupting it."""
+
+    ALL_TEMPLATES = {
+        "flea_market_tab", "offer_row", "confirm_button", "trader_tab", "sell_button",
+    }
+
+    def _machine(self, config, budget, price=10_000):
+        config.thresholds.min_margin = 0
+        config.safety.max_spend_per_session = budget
+        return build_machine(config, present=self.ALL_TEMPLATES, price=price)[0]
+
+    def test_run_stops_when_budget_exhausted(self, config):
+        # Budget covers exactly 3 buys at 10k.
+        machine = self._machine(config, budget=30_000)
+        machine.queue_trades([ranked(f"Item{i}") for i in range(10)])
+        context = machine.run()
+
+        assert len(context.completed) == 3
+        assert machine.guard.snapshot().spent == 30_000
+
+    def test_unaffordable_trade_is_returned_to_the_queue(self, config):
+        """A trade refused on budget must not be silently lost."""
+        machine = self._machine(config, budget=25_000)
+        machine.queue_trades([ranked(f"Item{i}") for i in range(5)])
+        context = machine.run()
+
+        assert len(context.completed) == 2
+        # The 3rd was requeued, not skipped, so a bigger budget can reach it.
+        assert len(context.queue) == 3
+        assert context.queue[0].item_name == "Item2"
+
+    def test_earnings_tracked_across_trades(self, config):
+        machine = self._machine(config, budget=100_000)
+        machine.queue_trades([ranked(f"Item{i}") for i in range(3)])
+        machine.run()
+
+        snap = machine.guard.snapshot()
+        assert snap.spent == 30_000
+        assert snap.earned == 60_000  # ranked() sells at 20k
+        assert snap.net == 30_000
+        assert (snap.purchases, snap.sales) == (3, 3)
+
+    def test_zero_budget_blocks_everything(self, config):
+        """max_spend_per_session=1 can't cover a 10k item."""
+        machine = self._machine(config, budget=1)
+        machine.queue_trades([ranked()])
+        context = machine.run()
+
+        assert context.completed == []
+        assert machine.guard.snapshot().spent == 0
+
+    def test_unlimited_budget_runs_the_whole_queue(self, config):
+        machine = self._machine(config, budget=0)  # 0 = unlimited
+        machine.queue_trades([ranked(f"Item{i}") for i in range(6)])
+        context = machine.run()
+        assert len(context.completed) == 6
+
+    def test_budget_reserved_against_observed_not_planned_price(self, config):
+        """A price that drifted up must consume the larger amount."""
+        # Planned 10k, on screen 10.5k (within the 10% drift tolerance).
+        machine = self._machine(config, budget=21_000, price=10_500)
+        machine.queue_trades([ranked(f"Item{i}") for i in range(3)])
+        context = machine.run()
+
+        # 21,000 budget / 10,500 actual = exactly 2 buys, not 3.
+        assert len(context.completed) == 2
+        assert machine.guard.snapshot().spent == 21_000
+
+    def test_failed_trade_releases_its_reservation(self, config):
+        """An aborted purchase must not leak budget."""
+        config.thresholds.min_margin = 0
+        config.safety.max_spend_per_session = 100_000
+        # No confirm_button -> the purchase never completes.
+        machine, _ = build_machine(
+            config,
+            present={"flea_market_tab", "offer_row"},
+            price=10_000,
+        )
+        machine.queue_trades([ranked()])
+        machine.run()
+
+        snap = machine.guard.snapshot()
+        assert snap.spent == 0
+        assert snap.committed == 0, "reservation must be released, not stranded"
+        assert snap.remaining == 100_000
+
+
 class TestSetupErrors:
     """Missing templates are a config problem; they must fail cleanly."""
 

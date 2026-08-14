@@ -152,6 +152,9 @@ class SafetyConfig(BaseModel):
     kill_hotkey: str = "f10"
     max_actions_per_run: int = Field(default=500, ge=1)
     max_consecutive_failures: int = Field(default=5, ge=1)
+    # Hard cap on roubles spent buying in one session. 0 = unlimited (and the
+    # bot will say so loudly at startup). Enforced before each purchase.
+    max_spend_per_session: int = Field(default=500_000, ge=0)
 
 
 class LoggingConfig(BaseModel):

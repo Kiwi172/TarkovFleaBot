@@ -48,6 +48,14 @@ STATE_TEMPLATES: dict[str, str] = {
 DEFAULT_MAX_PRICE_DRIFT = 0.10
 
 
+class BudgetReached(RuntimeError):
+    """The session spend cap can't cover the next trade.
+
+    A normal, successful end to a run — distinct from :class:`BotStopped`
+    (user intervention) and :class:`SafetyLimitExceeded` (something is wrong).
+    """
+
+
 class FleaBotMachine:
     """Vision-driven FSM over the flea market and trader screens."""
 
@@ -309,7 +317,7 @@ class FleaBotMachine:
 
                 try:
                     self._execute_trade(intent)
-                except (BotStopped, SafetyLimitExceeded):
+                except (BotStopped, SafetyLimitExceeded, BudgetReached):
                     raise
                 except Exception as exc:
                     log.exception("Trade failed: {}", exc)
@@ -325,12 +333,29 @@ class FleaBotMachine:
         except SafetyLimitExceeded as exc:
             log.error("Safety limit: {}", exc)
             self._safe_trigger(Trigger.STOP)
+        except BudgetReached as exc:
+            # Expected outcome, not a fault — the cap did its job.
+            log.info("Session budget reached: {}", exc)
 
-        log.info("Run summary: {}", self.context.summary())
+        snap = self.guard.snapshot()
+        log.info(
+            "Run summary: {} | spent {:,} earned {:,} net {:+,}",
+            self.context.summary(),
+            snap.spent,
+            snap.earned,
+            snap.net,
+        )
         return self.context
 
     def _execute_trade(self, intent: TradeIntent) -> None:
-        """One buy-then-sell cycle."""
+        """One buy-then-sell cycle, bounded by the session spend cap.
+
+        Budget handling is a reserve/commit/release triple. The reservation is
+        taken against the *observed* price (after ``select_item`` has read it
+        off screen), because that is the number that will actually leave the
+        stash — reserving against the planned price would let a drifted price
+        slip past the cap.
+        """
         if self.state != State.IN_FLEA_MARKET and not self.enter_flea_market():
             self.context.skip_current("could not open flea market")
             return
@@ -342,28 +367,50 @@ class FleaBotMachine:
             self._back_to_flea()
             return
 
-        self.begin_purchase()  # type: ignore[attr-defined]
-        if not self.confirm_action(accept=True):
-            self.context.skip_current("purchase not confirmed")
-            self._recover()
-            return
+        price = intent.observed_price or intent.expected_flea_price
+        if not self.guard.reserve_spend(price):
+            # Not an error: the session budget is spent. Put the item back so
+            # a larger budget on the next run can still reach it.
+            self.context.queue.insert(0, intent)
+            self.context.current = None
+            raise BudgetReached(
+                f"Session budget cannot cover {intent.item_name!r} at {price:,}"
+            )
 
-        if not self.enter_trader_menu():
-            self.context.skip_current("could not open trader menu")
-            self._recover()
-            return
+        committed = False
+        try:
+            self.begin_purchase()  # type: ignore[attr-defined]
+            if not self.confirm_action(accept=True):
+                self.context.skip_current("purchase not confirmed")
+                self._recover()
+                return
 
-        if not self.sell_to_trader(intent):
-            self.context.skip_current("sell failed")
-            self._recover()
-            return
+            # Money has now left the stash.
+            self.guard.commit_spend(price)
+            committed = True
 
-        log.info(
-            "Completed {!r}: margin {}",
-            intent.item_name,
-            intent.actual_margin() or intent.expected_margin,
-        )
-        self.context.complete_current()
+            if not self.enter_trader_menu():
+                self.context.skip_current("could not open trader menu")
+                self._recover()
+                return
+
+            if not self.sell_to_trader(intent):
+                self.context.skip_current("sell failed")
+                self._recover()
+                return
+
+            self.guard.record_sale(intent.expected_trader_price)
+            log.info(
+                "Completed {!r}: margin {}",
+                intent.item_name,
+                intent.actual_margin() or intent.expected_margin,
+            )
+            self.context.complete_current()
+        finally:
+            # Any exit before the purchase went through must hand the
+            # reservation back, or the budget leaks a little on every failure.
+            if not committed:
+                self.guard.release_spend(price)
 
     # ------------------------------------------------------------------
     def _back_to_flea(self) -> None:

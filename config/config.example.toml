@@ -164,6 +164,14 @@ psm = 7
 
 
 [safety]
+# HARD CAP on roubles spent buying in one session. The bot checks this BEFORE
+# every purchase and stops queueing trades once the remaining budget can't
+# cover the next one. 0 = unlimited (the bot warns loudly at startup).
+#
+# This is enforced in flea_bot.safety, not in the GUI, so it holds for headless
+# and scheduled runs too.
+max_spend_per_session = 500000
+
 # Global hotkeys. Requires the `keyboard` lib; on Linux that needs root.
 pause_hotkey = "f9"
 kill_hotkey = "f10"

@@ -146,7 +146,10 @@ plain data work. Only the orchestrator needs a live client.
 | [`vision/`](src/flea_bot/vision/) | `mss` capture, `cv2` template matching, `pytesseract` OCR |
 | [`input/`](src/flea_bot/input/) | Click/drag/type wrappers with humanised timing |
 | [`orchestrator/`](src/flea_bot/orchestrator/) | The `transitions` state machine that ties it together |
-| [`safety.py`](src/flea_bot/safety.py) | Dry-run, pause/kill hotkeys, runaway guards |
+| [`safety.py`](src/flea_bot/safety.py) | Dry-run, pause/kill hotkeys, runaway guards, spend cap |
+| [`ledger.py`](src/flea_bot/ledger.py) | Thread-safe session ledger: spent / earned / net / budget remaining |
+| [`setup_wizard.py`](src/flea_bot/setup_wizard.py) | Interactive calibration that writes `config.toml` |
+| [`gui/`](src/flea_bot/gui/) | Tkinter dashboard; worker thread + event queue bridge |
 
 ---
 
@@ -181,10 +184,22 @@ cd flea-bot && uv sync --extra dev
 | macOS | `brew install tesseract` |
 | Windows | [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki), then set `[ocr].tesseract_cmd` |
 
-### 4. Create your config
+### 4. Calibrate
 
 ```bash
-cp config/config.example.toml config/config.toml
+uv run flea-bot setup
+```
+
+The wizard walks you through pointing at each UI element — you mark two corners
+per item and it reads your cursor, so you never type a coordinate. It captures
+the template images and writes `config/config.toml` for you.
+
+Re-run it after any resolution or UI-scale change. It replaces only the
+`[window]` sections and backs up your old config first, so tuned thresholds
+survive. To redo a single item:
+
+```bash
+uv run flea-bot setup --only sell_button
 ```
 
 ### 5. Check the install
@@ -193,8 +208,9 @@ cp config/config.example.toml config/config.toml
 uv run flea-bot doctor
 ```
 
-This reports missing dependencies, an unusable Tesseract, and uncaptured
-template images. Get it green before going anywhere near live mode.
+This reports missing dependencies, an unusable Tesseract, uncaptured template
+images, and which price source you'll get. Get it green before going anywhere
+near live mode.
 
 ---
 
@@ -234,6 +250,27 @@ uv run flea-bot snip --name flea_market_tab --region 100,60,180,40
 which override whatever the API reports. Also holds a blacklist.
 
 ---
+
+## The dashboard
+
+```bash
+uv run flea-bot gui
+```
+
+Live net profit, spend, earnings and remaining budget; a progress bar for the
+session cap; start/pause/stop; and an activity log.
+
+Two deliberate choices in there:
+
+- **Dry run is ticked on every launch**, regardless of what's in your config.
+  Leaving it requires a confirmation dialog. The safe option shouldn't be
+  something you can end up in live mode by forgetting.
+- **The spend cap is enforced in `safety.py`, not in the window.** It holds for
+  headless runs, scheduled runs, and runs where the GUI has crashed. A budget
+  that only exists in a window is not a budget.
+
+Starting a live run with the budget set to `0` (unlimited) prompts an extra
+confirmation, because that combination can spend every rouble you have.
 
 ## Usage
 
@@ -276,6 +313,7 @@ This drives a mouse. Treat it accordingly.
 | Mechanism | What it does |
 |---|---|
 | **Dry-run** (default) | Logs every action as `[DRY] would …`; the input backend is swapped for a no-op sink, so there is no code path that dispatches input |
+| **Session spend cap** | Hard limit on roubles spent per run, checked *before* each purchase. Reserve/commit/release, so an aborted trade returns its budget and a drifted price consumes the real amount |
 | **Kill switch** (`F10`) | Stops at the next checkpoint, even mid-pause |
 | **Pause** (`F9`) | Blocks before the next action; press again to resume |
 | **Action cap** | Hard stop after `safety.max_actions_per_run` actions |

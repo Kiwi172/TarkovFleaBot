@@ -187,6 +187,90 @@ def stats(
 
 
 @app.command()
+def gui() -> None:
+    """Open the dashboard: live earnings, spend cap, start/pause/stop."""
+    cfg = _config()
+    try:
+        import tkinter  # noqa: F401
+    except ImportError as exc:
+        typer.secho("tkinter is not available in this Python.", fg=typer.colors.RED)
+        typer.echo("  Linux:   sudo apt install python3-tk")
+        typer.echo("  Or use a uv-managed Python, which bundles it:")
+        typer.echo("           uv python install 3.12 && uv sync")
+        raise typer.Exit(1) from exc
+
+    from flea_bot.gui import launch
+
+    launch(cfg)
+
+
+@app.command()
+def setup(
+    only: str | None = typer.Option(
+        None, help="Comma-separated step keys to redo (default: all)."
+    ),
+    output: Path | None = typer.Option(None, help="Config path to write."),
+) -> None:
+    """Interactive calibration — capture UI regions and templates, write config.
+
+    Run this once after install, and again after changing resolution or UI
+    scale. It replaces only the [window] sections; your thresholds and price
+    source settings are preserved.
+    """
+    from flea_bot.config import DEFAULT_CONFIG_PATH
+    from flea_bot.setup_wizard import (
+        STEPS,
+        CalibrationWizard,
+        WizardAborted,
+        countdown,
+        write_config,
+    )
+
+    cfg = _config()
+    target = output or DEFAULT_CONFIG_PATH
+
+    typer.secho("\nflea-bot calibration", bold=True)
+    typer.echo("Point at each UI element in turn; the wizard reads your cursor.")
+    typer.echo("You'll mark two corners per item. Ctrl-C aborts at any time.\n")
+
+    keys = [k.strip() for k in only.split(",")] if only else None
+    if keys:
+        known = {s.key for s in STEPS}
+        if unknown := set(keys) - known:
+            typer.secho(f"Unknown step(s): {', '.join(sorted(unknown))}", fg=typer.colors.RED)
+            typer.echo(f"Valid steps: {', '.join(s.key for s in STEPS)}")
+            raise typer.Exit(1)
+
+    def ask(message: str) -> str:
+        return input(message)
+
+    def say(message: str) -> None:
+        typer.echo(message)
+
+    wizard = CalibrationWizard(cfg, prompt=ask, notify=say)
+
+    try:
+        if keys is None:
+            typer.echo("Make sure SPT is running and visible.")
+            countdown(say, 5)
+            window = wizard.detect_window()
+        else:
+            w = cfg.window
+            window = (w.left, w.top, w.width, w.height)
+            typer.echo(f"Reusing existing window bounds {list(window)}.")
+
+        wizard.run(only=keys)
+    except (KeyboardInterrupt, WizardAborted):
+        typer.secho("\nCalibration aborted — nothing was written.", fg=typer.colors.YELLOW)
+        raise typer.Exit(1) from None
+
+    written = write_config(wizard, window, target)
+    typer.secho(f"\nWrote {written}", fg=typer.colors.GREEN)
+    typer.echo("Verify it with:  flea-bot doctor")
+    typer.echo("Then try a safe run:  flea-bot run --dry-run")
+
+
+@app.command()
 def calibrate(seconds: int = typer.Option(30, help="How long to track the cursor.")) -> None:
     """Print the cursor position live, to fill in [window] coordinates."""
     try:
