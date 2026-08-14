@@ -1,0 +1,188 @@
+# flea-bot configuration
+#
+# Copy to config/config.toml and edit. config.toml is gitignored because it
+# holds screen coordinates specific to your machine and (optionally) API keys.
+#
+#   cp config/config.example.toml config/config.toml
+
+[general]
+# Never send input to the game; every action is logged as "WOULD ..." instead.
+# Leave this true until you have calibrated coordinates and templates.
+dry_run = true
+# Root for the SQLite db, logs and debug captures.
+data_dir = "data"
+
+
+[prices]
+# Where prices come from. One of:
+#
+#   "auto"       Prefer your local SPT install, then the SPT mirror, then
+#                tarkov.dev. Falls through automatically on failure.
+#   "spt"        Your local SPT server's own database. EXACT — it is the
+#                table your game actually prices the flea from.
+#   "spt-mirror" The same files from the SPT repo on GitHub, for when you
+#                aren't on the SPT machine. Prices and names are exact, but
+#                trader eligibility can't be resolved (see below), so trader
+#                payouts are an UPPER BOUND.
+#   "tarkov.dev" Live Tarkov community data. A different economy — useful as
+#                a cross-reference, not as truth for SPT.
+source = "auto"
+
+# Path to your SPT folder (the one containing SPT_Data/). Leave empty to
+# autodetect ~/SPT, C:/SPT, C:/Games/SPT.
+# spt_install_path = "C:/SPT"
+
+# Where "spt-mirror" reads from.
+spt_mirror_url = "https://raw.githubusercontent.com/sp-tarkov/server/master/project/assets/database"
+
+# ---------------------------------------------------------------------------
+# WHY LOCAL BEATS MIRROR
+# Which traders will buy a given item is defined by items_buy.category in each
+# trader's base.json, and resolving those needs templates/items.json — an 18 MB
+# Git-LFS file GitHub's raw endpoints don't serve. With a local install the bot
+# filters trader payouts exactly; from the mirror it offers the best payout
+# across all traders, which may name a trader who'd refuse the item.
+# ---------------------------------------------------------------------------
+
+# tarkov.dev public GraphQL API. No key required.
+api_url = "https://api.tarkov.dev/graphql"
+# Items fetched per GraphQL page.
+page_size = 200
+# Stop after this many pages (safety valve). Comment out to fetch everything
+# (TOML has no null literal — an omitted key becomes None).
+max_pages = 50
+# Minimum seconds between outbound requests. Be polite: tarkov.dev is free
+# and community-funded.
+min_request_interval = 1.0
+request_timeout = 30.0
+max_retries = 4
+# Exponential backoff: delay = backoff_factor * (2 ** attempt), plus jitter.
+backoff_factor = 0.75
+
+
+[traders]
+# Static overrides for trader sell prices, layered on top of the API values.
+# Use this to encode your SPT server's actual trader prices where they differ.
+reference_file = "config/trader_prices.yaml"
+# If an item has no override, fall back to the best trader price from the API.
+fall_back_to_api = true
+
+
+[thresholds]
+# --- ranking filters -------------------------------------------------------
+# Absolute minimum roubles of profit for an item to be considered.
+min_margin = 5000
+# Minimum margin as a fraction of the flea price (0.15 = 15% return).
+min_margin_ratio = 0.15
+# Ignore items cheaper than this — the click overhead isn't worth it.
+min_flea_price = 1000
+# Ignore items above this; caps risk per trade.
+max_flea_price = 500000
+# How many candidates the decision engine returns.
+top_n = 25
+# Skip items whose price history is more volatile than this (stddev/mean).
+# Comment this key out to disable the check entirely.
+max_volatility = 0.35
+# Rolling window (hours) used for average/volatility stats.
+history_window_hours = 24
+
+# --- vision ---------------------------------------------------------------
+# cv2 template match confidence in [0,1]. Below this, "not found".
+template_confidence = 0.85
+# Tesseract confidence floor for accepting OCR'd numbers.
+ocr_confidence = 60.0
+
+
+[input]
+# Randomized delay bounds (seconds) inserted around each action so the bot
+# doesn't fire perfectly-timed inputs into the UI (which drops events).
+min_action_delay = 0.08
+max_action_delay = 0.25
+# Extra pause after a click before the next action.
+post_click_delay = 0.15
+# Duration bounds for a mouse move/drag.
+min_move_duration = 0.12
+max_move_duration = 0.40
+# Pixels of random offset applied to click targets, so clicks don't always
+# land on the exact same pixel of a button.
+click_jitter_px = 3
+
+
+[window]
+# The game window's top-left corner and size, in screen pixels.
+# All region coordinates below are ABSOLUTE screen coords.
+# Run `flea-bot calibrate` to print the cursor position interactively.
+left = 0
+top = 0
+width = 1920
+height = 1080
+# Monitor index for mss (1 = primary).
+monitor = 1
+
+# Regions are [left, top, width, height] in absolute screen pixels.
+[window.regions]
+# Flea market search box.
+search_box = [640, 180, 400, 32]
+# The list of offers returned by a search.
+offer_list = [420, 240, 1080, 640]
+# Price column of the first (cheapest) offer row.
+first_offer_price = [1180, 250, 140, 28]
+# Quantity/stack count of the first offer row.
+first_offer_quantity = [1330, 250, 90, 28]
+# Your rouble balance, top-right of the trading screen.
+player_balance = [1560, 60, 200, 30]
+# Trader sell panel total.
+trader_sell_total = [1240, 820, 200, 32]
+# Where a modal confirm dialog appears.
+confirm_dialog = [760, 420, 400, 240]
+
+[window.templates]
+# Reference images used for template matching, relative to the repo root.
+# You must capture these yourself from your own client:
+#   flea-bot snip --name flea_market_tab --region 100,60,180,40
+flea_market_tab = "assets/templates/flea_market_tab.png"
+trader_tab = "assets/templates/trader_tab.png"
+offer_row = "assets/templates/offer_row.png"
+sell_button = "assets/templates/sell_button.png"
+confirm_button = "assets/templates/confirm_button.png"
+cancel_button = "assets/templates/cancel_button.png"
+loading_spinner = "assets/templates/loading_spinner.png"
+
+
+[ocr]
+# Path to the tesseract binary. Leave commented out to look it up on PATH.
+# Windows example:
+# tesseract_cmd = "C:/Program Files/Tesseract-OCR/tesseract.exe"
+# Upscale factor applied before OCR — small UI text reads much better at 3-4x.
+upscale = 3
+# Adaptive/Otsu thresholding. Tarkov's UI is light text on dark, so we invert.
+invert = true
+# Restrict recognition to these characters (digits + separators).
+char_whitelist = "0123456789.,₽ "
+# Tesseract page segmentation mode. 7 = treat image as a single text line.
+psm = 7
+
+
+[safety]
+# Global hotkeys. Requires the `keyboard` lib; on Linux that needs root.
+pause_hotkey = "f9"
+kill_hotkey = "f10"
+# Hard stop after this many actions in one run, as a runaway guard.
+max_actions_per_run = 500
+# Hard stop after this many consecutive vision failures.
+max_consecutive_failures = 5
+
+
+[logging]
+level = "INFO"
+# Written under data_dir/logs/.
+file = "flea-bot.log"
+rotation = "10 MB"
+retention = "14 days"
+# Emit newline-delimited JSON alongside the human-readable log.
+json_sink = true
+
+
+[api_keys]
+# tarkov.dev needs no key. Kept for alternative providers you might add.
+tarkov_market = ""

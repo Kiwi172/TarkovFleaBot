@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Local config holds window coordinates + any API keys — never commit it.
+config/config.toml
+
+# Runtime artifacts
+*.db
+*.sqlite3
+data/
+logs/
+debug_captures/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.idea/
+.vscode/

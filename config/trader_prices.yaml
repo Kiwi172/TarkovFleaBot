@@ -1,0 +1,64 @@
+# Static trader sell-price overrides.
+#
+# WHY THIS FILE EXISTS
+# The tarkov.dev API already reports trader sell prices, but those are LIVE
+# Tarkov values. Your SPT server's trader prices come from its own item
+# database and mod stack, so they drift. Anything you put here wins over the
+# API value; anything you omit falls back to the API (see
+# [traders].fall_back_to_api in config.toml).
+#
+# Prices are in roubles, for ONE unit, AFTER the trader's buy-back rate — i.e.
+# the number the trader actually hands you. Read them off your own client.
+#
+# FORMAT
+#   "<exact item name>":
+#     trader: <trader name>
+#     price: <roubles per unit>
+#     notes: <optional free text>
+#
+# A bare number is also accepted as shorthand:
+#   "Item name": 12345
+#
+# Names must match the tarkov.dev item name exactly (case-insensitive; the
+# loader normalises whitespace). Run `flea-bot items --search <text>` to find
+# the canonical name for an item.
+
+version: 1
+
+# Trader level assumptions these prices were recorded at. Purely documentation
+# — the loader does not enforce it — but future-you will want to know.
+meta:
+  spt_version: "3.9.x"
+  trader_levels:
+    Prapor: 4
+    Therapist: 4
+    Skier: 4
+    Peacekeeper: 4
+    Mechanic: 4
+    Ragman: 4
+    Jaeger: 4
+  recorded: "2026-08-14"
+
+items:
+  # ---- examples; replace with values from your own server ----------------
+  "Bottle of water":
+    trader: Therapist
+    price: 15000
+    notes: "Example row — verify against your own client before trusting it."
+
+  "Salewa first aid kit":
+    trader: Therapist
+    price: 19000
+
+  "Paracord":
+    trader: Jaeger
+    price: 24000
+
+  # Shorthand form: price only, trader unspecified.
+  "Bolts": 2400
+
+# Items to never trade, regardless of margin. Useful for quest items you need
+# to keep, or things your SPT config prices absurdly.
+blacklist:
+  - "Dogtag BEAR"
+  - "Dogtag USEC"
